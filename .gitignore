@@ -1,0 +1,10 @@
+# Go build/test artifacts
+bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# sqlc generated code is committed (per project convention), so no ignore here.
+# Local tool binaries
+.golangci-cache/

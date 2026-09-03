@@ -1,0 +1,38 @@
+# golangci-lint v2 config (task T005).
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+    - misspell
+    - gocritic
+    - sqlclosecheck
+  disable:
+    - exhaustruct
+    - funlen
+  settings:
+    govet:
+      enable:
+        - fieldalignment
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - hikingfo
