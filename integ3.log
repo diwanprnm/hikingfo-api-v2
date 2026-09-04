@@ -1,0 +1,26 @@
+Go test: 2 passed, 7 failed in 1 packages
+═══════════════════════════════════════
+
+integration (2 passed, 7 failed)
+  [FAIL] TestRecordHikeCreatesVerifiedEntryAndFeedPost
+     stories_test.go:80: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to ex...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestPhotoLessHikeRejectedAndEditDelete
+     stories_test.go:119: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestBadgeEarnAndLapse
+     stories_test.go:183: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestBadgeEventEnqueuesNotification
+     stories_test.go:262: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestMutualMatchRevealsContactsOnly
+     stories_test.go:290: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestAutoExpireQueryTime
+     stories_test.go:357: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+  [FAIL] TestCatalogueSearchFilterAndProfile
+     stories_test.go:411: migrate: ERROR 0001_foundation.sql: failed to run SQL migration: failed to e...
+     CREATE TYPE user_status AS ENUM ('active', 'suspended', 'banned');" (SQLSTATE 42601)
+[full output: ~/AppData\Local\rtk\tee\1788504668_go_test.log]

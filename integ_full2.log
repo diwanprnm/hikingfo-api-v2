@@ -1,0 +1,9 @@
+Go test: 0 passed, 1 failed in 1 packages
+═══════════════════════════════════════
+
+integration (0 passed, 1 failed)
+  [FAIL] TestRecordHikeCreatesVerifiedEntryAndFeedPost
+     stories_test.go:80: open pool: db: ping: failed to connect to `user=postgres database=postgres`:
+     [::1]:32803 (localhost): failed to receive message: unexpected EOF
+     127.0.0.1:32803 (localhost): failed to receive message: unexpected EOF
+[full output: ~/AppData\Local\rtk\tee\1788504466_go_test.log]

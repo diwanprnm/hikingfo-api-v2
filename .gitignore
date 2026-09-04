@@ -8,3 +8,6 @@ coverage.out
 # sqlc generated code is committed (per project convention), so no ignore here.
 # Local tool binaries
 .golangci-cache/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
