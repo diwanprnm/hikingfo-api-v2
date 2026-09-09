@@ -35,6 +35,7 @@ func New(cfg config.Config, pool *pgxpool.Pool, lookup SessionLookup) *Server {
 		Recovery(),
 		RequestID(),
 		I18n(),
+		SecurityHeaders(),
 		DevCORS(),
 	)
 
@@ -44,8 +45,20 @@ func New(cfg config.Config, pool *pgxpool.Pool, lookup SessionLookup) *Server {
 		cookieName = "hikingfo_session"
 	}
 
-	// Attach session auth — degrades gracefully on public routes.
+	// Attach session auth — degrades gracefully on public routes. SessionAuth
+	// also sets the session-scoped CSRF cookie used by the CSRF middleware.
 	r.Use(SessionAuth(cookieName, lookup))
+
+	// CSRF protection on mutating requests (double-submit cookie pattern).
+	// Skips auth endpoints that establish the session (register/login/google).
+	r.Use(func(c *gin.Context) {
+		switch c.FullPath() {
+		case "/api/v1/auth/register", "/api/v1/auth/login", "/api/v1/auth/google":
+			c.Next()
+			return
+		}
+		CSRF("hikingfo_csrf")(c)
+	})
 
 	// Health endpoint (always public).
 	r.GET("/api/v1/healthz", func(c *gin.Context) {

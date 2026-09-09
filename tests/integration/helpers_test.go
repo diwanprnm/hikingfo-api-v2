@@ -84,7 +84,9 @@ func createUser(t *testing.T, pool *pgxpool.Pool, email, displayName string) *te
 		TokenHash: hashTokenForTest(rawToken),
 		CSRFToken: "csrf-" + email,
 		CreatedAt: fixedNow(),
-		ExpiresAt: fixedNow().Add(24 * time.Hour),
+		// Real-time expiry: session lookup compares expires_at > now() against
+		// the container clock, so fixedNow()+24h would rot the day after.
+		ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	if err := identityInfra.NewSessionRepository(pool).Create(ctx, s); err != nil {
 		t.Fatalf("create session for %s: %v", email, err)

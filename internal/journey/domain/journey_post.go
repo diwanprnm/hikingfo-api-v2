@@ -91,4 +91,7 @@ type JourneyPostRepository interface {
 	Publish(ctx context.Context, id, userID ids.ID) error
 	ListFeed(ctx context.Context, filter FeedFilter) ([]FeedItem, int, error)
 	GetFeedItem(ctx context.Context, id ids.ID) (*FeedDetail, error)
+	// SetModerationStatus flips moderation_status directly — admin path, no
+	// ownership check (contracts §9 → resolve report → hide_content).
+	SetModerationStatus(ctx context.Context, id ids.ID, status ModerationStatus) error
 }

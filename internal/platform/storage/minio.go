@@ -6,6 +6,8 @@ package storage
 import (
 	"context"
 	"io"
+	"net"
+	"net/http"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -14,10 +16,16 @@ import (
 
 // MinIOConfig carries the connection details for a MinIO instance.
 type MinIOConfig struct {
-	Endpoint  string // host:port, e.g. "minio:9000"
+	Endpoint  string // host:port the API process dials, e.g. "minio:9000"
 	AccessKey string
 	SecretKey string
 	Secure    bool // use HTTPS to MinIO
+	// PublicEndpoint, when set, is the host:port BROWSERS use (002 research
+	// R2). Presigned URLs must carry the host the browser will send as
+	// :authority — S3v4 signs the host — so we point the client at the public
+	// host and let the transport dial the internal endpoint instead.
+	PublicEndpoint string
+	PublicSecure   bool
 }
 
 // MinIOStore is the concrete BlobStore backed by MinIO / S3.
@@ -28,10 +36,22 @@ type MinIOStore struct {
 
 // NewMinIOStore creates a MinIOStore scoped to a single bucket.
 func NewMinIOStore(cfg MinIOConfig, bucket string) (*MinIOStore, error) {
-	client, err := minio.New(cfg.Endpoint, &minio.Options{
+	signEndpoint := cfg.Endpoint
+	opts := &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: cfg.Secure,
-	})
+	}
+	if cfg.PublicEndpoint != "" {
+		signEndpoint = cfg.PublicEndpoint
+		internal := cfg.Endpoint
+		opts.Secure = cfg.PublicSecure
+		opts.Transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, network, internal)
+			},
+		}
+	}
+	client, err := minio.New(signEndpoint, opts)
 	if err != nil {
 		return nil, err
 	}

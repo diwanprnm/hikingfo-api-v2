@@ -3,6 +3,7 @@
 package interfaces
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,15 +11,27 @@ import (
 	"hikingfo/backend/internal/catalogue/application"
 	"hikingfo/backend/internal/catalogue/domain"
 	plathttp "hikingfo/backend/internal/platform/http"
+	"hikingfo/backend/internal/shared/ids"
 	"hikingfo/backend/internal/shared/kerr"
 )
 
 // Handler holds the catalogue application service.
-type Handler struct{ svc *application.Service }
+type Handler struct {
+	svc *application.Service
+	// fieldReport writes FR-003 field-error reports into the moderation
+	// context (composition-root supplied closure). Nil → acknowledges only.
+	fieldReport func(ctx context.Context, mountainID ids.ID, field, reason, detail string) error
+}
 
 // NewHandler wires the handler.
 func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
+}
+
+// SetFieldReport wires the moderation-context report writer (T033/T034 —
+// "report error" on a mountain field). Called by the composition root.
+func (h *Handler) SetFieldReport(fn func(ctx context.Context, mountainID ids.ID, field, reason, detail string) error) {
+	h.fieldReport = fn
 }
 
 // RegisterRoutes mounts all catalogue routes under /api/v1 (all public).
@@ -109,15 +122,25 @@ type reportFieldReq struct {
 }
 
 func (h *Handler) reportField(c *gin.Context) {
-	_ = c.Param("id")
-	_ = c.Param("field")
+	mountainID, err := ids.Parse(c.Param("id"))
+	if err != nil {
+		plathttp.WriteError(c, kerr.Validation("invalid mountain id"))
+		return
+	}
+	field := c.Param("field")
 	var req reportFieldReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		plathttp.WriteError(c, kerr.Validation("reason is required"))
 		return
 	}
-	// The actual report is created in the moderation context via the event bus
-	// or a direct call. For now, acknowledge the report.
+	// FR-003: field-error reports land in the moderation queue as
+	// mountain_field reports so the admin can edit + annotate provenance.
+	if h.fieldReport != nil {
+		if err := h.fieldReport(c.Request.Context(), mountainID, field, req.Reason, req.Detail); err != nil {
+			plathttp.WriteError(c, err)
+			return
+		}
+	}
 	c.JSON(http.StatusAccepted, gin.H{"ok": true, "status": "submitted"})
 }
 

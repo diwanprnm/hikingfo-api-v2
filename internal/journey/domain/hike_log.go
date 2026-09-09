@@ -13,9 +13,10 @@ import (
 type HikeStatus string
 
 const (
-	HikeStatusVerified HikeStatus = "verified"
-	HikeStatusDisputed HikeStatus = "disputed"
-	HikeStatusRemoved  HikeStatus = "removed"
+	HikeStatusVerified   HikeStatus = "verified"
+	HikeStatusUnverified HikeStatus = "unverified"
+	HikeStatusDisputed   HikeStatus = "disputed"
+	HikeStatusRemoved    HikeStatus = "removed"
 )
 
 // HikeLogEntry is the user's hiking evidence record (data-model → hike_log_entries).
@@ -25,7 +26,7 @@ type HikeLogEntry struct {
 	MountainID       ids.ID
 	RouteID          *ids.ID       // nullable
 	ClimbDate        time.Time     // date only
-	EvidencePhotoKeys []string     // ≥1 required
+	EvidencePhotoKeys []string     // 0..5; status derived from presence
 	Status           HikeStatus
 	PublishedPostID  *ids.ID       // nullable, linked journey post
 	CreatedAt        time.Time
@@ -39,4 +40,8 @@ type HikeLogRepository interface {
 	ListByUser(ctx context.Context, userID ids.ID, limit, offset int) ([]HikeLogEntry, int, error)
 	Delete(ctx context.Context, id, userID ids.ID) error
 	CountVerifiedDistinctMountains(ctx context.Context, userID ids.ID) (int, error)
+	UpdatePublishedPost(ctx context.Context, hikeID, postID ids.ID) error
+	// SetStatus flips hike status directly — admin path (contracts §9 →
+	// resolve report → remove_evidence de-counts from badge math).
+	SetStatus(ctx context.Context, id ids.ID, status HikeStatus) error
 }

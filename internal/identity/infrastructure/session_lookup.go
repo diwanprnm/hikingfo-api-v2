@@ -29,16 +29,17 @@ func (a *SessionLookupAdapter) FindUserByTokenHash(ctx context.Context, tokenHas
 		userID string
 		role   string
 		status string
+		csrf   string
 	)
 	err := a.pool.QueryRow(ctx,
-		`SELECT u.id::text, u.role, u.status
+		`SELECT u.id::text, u.role, u.status, s.csrf_token
 		   FROM sessions s
 		   JOIN users u ON u.id = s.user_id
 		  WHERE s.token_hash = $1
 		    AND s.revoked_at IS NULL
 		    AND s.expires_at > now()`,
 		tokenHash,
-	).Scan(&userID, &role, &status)
+	).Scan(&userID, &role, &status, &csrf)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -46,9 +47,10 @@ func (a *SessionLookupAdapter) FindUserByTokenHash(ctx context.Context, tokenHas
 		return nil, err
 	}
 	return &http.SessionUser{
-		ID:     ids.ID(userID),
-		Role:   role,
-		Status: status,
+		ID:        ids.ID(userID),
+		Role:      role,
+		Status:    status,
+		CSRFToken: csrf,
 	}, nil
 }
 

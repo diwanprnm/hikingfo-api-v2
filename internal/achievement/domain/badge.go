@@ -51,6 +51,14 @@ type BadgeConfigRepository interface {
 	Active(ctx context.Context) ([]BadgeConfig, error)
 }
 
+// BadgeConfigAdmin extends the read port with admin mutations (contracts §9).
+type BadgeConfigAdmin interface {
+	// All returns every config, active or not.
+	All(ctx context.Context) ([]BadgeConfig, error)
+	// Upsert inserts or updates a config by key.
+	Upsert(ctx context.Context, bc *BadgeConfig) error
+}
+
 // JourneyQueryPort reads journey data (cross-context READ from hike_log_entries).
 type JourneyQueryPort interface {
 	// CountVerifiedDistinctMountains returns the count of distinct mountains

@@ -1,13 +1,30 @@
 # Go build/test artifacts
 bin/
+vendor/
 *.exe
+*.exe~
 *.test
 *.out
+*.log
 coverage.out
+coverage.html
+__debug_bin*
 
 # sqlc generated code is committed (per project convention), so no ignore here.
 # Local tool binaries
 .golangci-cache/
 
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 graft/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.sw?

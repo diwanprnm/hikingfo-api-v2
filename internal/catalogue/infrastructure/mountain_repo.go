@@ -80,7 +80,7 @@ func (r *MountainRepository) SearchAndFilter(ctx context.Context, f domain.Searc
 	q := fmt.Sprintf(`
 		SELECT m.id, m.slug, m.name, m.aliases, m.region, m.province,
 		       m.location, m.latitude, m.longitude, m.peak_name, m.peak_height_m,
-		       m.difficulty, m.status, m.data_meta, m.created_at, m.updated_at
+		       m.difficulty, m.status, m.data_meta, m.photo_key, m.created_at, m.updated_at
 		  FROM mountains m
 		 WHERE %s
 		 ORDER BY m.peak_height_m DESC
@@ -109,7 +109,7 @@ func (r *MountainRepository) FindBySlug(ctx context.Context, slug string) (*doma
 	row := r.pool.QueryRow(ctx,
 		`SELECT m.id, m.slug, m.name, m.aliases, m.region, m.province,
 		        m.location, m.latitude, m.longitude, m.peak_name, m.peak_height_m,
-		        m.difficulty, m.status, m.data_meta, m.created_at, m.updated_at
+		        m.difficulty, m.status, m.data_meta, m.photo_key, m.created_at, m.updated_at
 		   FROM mountains m
 		  WHERE m.slug = $1`, slug)
 	return scanMountain(row)
@@ -119,7 +119,7 @@ func (r *MountainRepository) FindByID(ctx context.Context, id ids.ID) (*domain.M
 	row := r.pool.QueryRow(ctx,
 		`SELECT m.id, m.slug, m.name, m.aliases, m.region, m.province,
 		        m.location, m.latitude, m.longitude, m.peak_name, m.peak_height_m,
-		        m.difficulty, m.status, m.data_meta, m.created_at, m.updated_at
+		        m.difficulty, m.status, m.data_meta, m.photo_key, m.created_at, m.updated_at
 		   FROM mountains m
 		  WHERE m.id = $1`, string(id))
 	return scanMountain(row)
@@ -213,15 +213,19 @@ func scanMountain(row scannable) (*domain.Mountain, error) {
 	var region string
 	var status string
 	var dataMeta []byte
+	var photoKey *string // photo_key is nullable; "" when absent
 	if err := row.Scan(
 		&m.ID, &m.Slug, &m.Name, &m.Aliases, &region, &m.Province,
 		&m.Location, &m.Latitude, &m.Longitude, &m.PeakName, &m.PeakHeightM,
-		&m.Difficulty, &status, &dataMeta, &m.CreatedAt, &m.UpdatedAt,
+		&m.Difficulty, &status, &dataMeta, &photoKey, &m.CreatedAt, &m.UpdatedAt,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, domain.MountainNotFound{}
 		}
 		return nil, err
+	}
+	if photoKey != nil {
+		m.PhotoKey = *photoKey
 	}
 	m.Region = domain.Region(region)
 	m.Status = domain.PublishStatus(status)

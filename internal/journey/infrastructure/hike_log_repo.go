@@ -21,12 +21,18 @@ func NewHikeLogRepository(pool *pgxpool.Pool) *HikeLogRepository {
 var _ domain.HikeLogRepository = (*HikeLogRepository)(nil)
 
 func (r *HikeLogRepository) Create(ctx context.Context, h *domain.HikeLogEntry) error {
+	// A nil []string encodes as SQL NULL; the column is NOT NULL (004: a
+	// photo-less hike has an empty array).
+	evidence := h.EvidencePhotoKeys
+	if evidence == nil {
+		evidence = []string{}
+	}
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO hike_log_entries
 		   (id, user_id, mountain_id, route_id, climb_date, evidence_photo_keys, status, published_post_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		string(h.ID), string(h.UserID), string(h.MountainID),
-		nullableID(h.RouteID), h.ClimbDate, h.EvidencePhotoKeys,
+		nullableID(h.RouteID), h.ClimbDate, evidence,
 		string(h.Status), nullableID(h.PublishedPostID),
 	)
 	return err
@@ -95,6 +101,14 @@ func (r *HikeLogRepository) CountVerifiedDistinctMountains(ctx context.Context, 
 	return count, err
 }
 
+// UpdatePublishedPost links a hike log entry to its companion journey post.
+func (r *HikeLogRepository) UpdatePublishedPost(ctx context.Context, hikeID, postID ids.ID) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE hike_log_entries SET published_post_id = $1 WHERE id = $2`,
+		string(postID), string(hikeID))
+	return err
+}
+
 // ---- scan helpers ---------------------------------------------------------
 
 // scannable is satisfied by both pgx.Row (QueryRow) and *pgx.Rows (Query).
@@ -132,4 +146,18 @@ func nullableID(id *ids.ID) any {
 		return nil
 	}
 	return string(*id)
+}
+
+// SetStatus flips hike status directly (admin path).
+func (r *HikeLogRepository) SetStatus(ctx context.Context, id ids.ID, status domain.HikeStatus) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE hike_log_entries SET status = $2, updated_at = now() WHERE id = $1`,
+		string(id), string(status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.HikeLogNotFound{}
+	}
+	return nil
 }

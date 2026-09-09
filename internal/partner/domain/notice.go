@@ -22,16 +22,16 @@ const (
 // PartnerNotice is a public declaration that a user is looking for a hiking
 // partner on a given mountain and date range (data-model → partner_notices).
 type PartnerNotice struct {
-	ID         ids.ID
-	UserID     ids.ID
-	MountainID ids.ID
-	TripStart  time.Time
-	TripEnd    time.Time
-	Note       string
-	Status     NoticeStatus
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID         ids.ID        `json:"id"`
+	UserID     ids.ID        `json:"user_id"`
+	MountainID ids.ID        `json:"mountain_id"`
+	TripStart  time.Time     `json:"trip_start"`
+	TripEnd    time.Time     `json:"trip_end"`
+	Note       string        `json:"note"`
+	Status     NoticeStatus  `json:"status"`
+	ExpiresAt  time.Time     `json:"expires_at"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
 }
 
 // NoticeFilter carries query parameters for listing notices.

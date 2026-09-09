@@ -62,7 +62,7 @@ func parseAcceptLanguage(header string) string {
 	if header == "" {
 		return "id"
 	}
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		lang := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
 		switch {
 		case strings.HasPrefix(lang, "en"):
@@ -86,9 +86,10 @@ type SessionLookup interface {
 // SessionUser is the platform's read-only view of a user loaded from a
 // session.  It avoids importing identity/domain in the platform layer.
 type SessionUser struct {
-	ID     ids.ID
-	Role   string // "member" | "admin"
-	Status string // "active" | "suspended" | "banned"
+	ID        ids.ID
+	Role      string // "member" | "admin"
+	Status    string // "active" | "suspended" | "banned"
+	CSRFToken string // per-session CSRF token; "" when no session
 }
 
 // IsActive reports whether the user may use the platform.
@@ -113,8 +114,24 @@ func SessionAuth(cookieName string, lookup SessionLookup) gin.HandlerFunc {
 			return
 		}
 		SetUser(c, u.ID, u.Role)
+		if u.CSRFToken != "" {
+			// Session-scoped CSRF cookie: readable by the SPA (not httpOnly)
+			// so it can echo the value in X-CSRF-Token on mutating requests.
+			// Path must be "/" — document.cookie only exposes cookies whose
+			// path prefixes the PAGE path; "/api" hid it from every non-API route.
+			secure := !isLoopbackHost(c.Request.Host)
+			c.SetSameSite(http.SameSiteLaxMode)
+			c.SetCookie("hikingfo_csrf", u.CSRFToken, 0, "/", "", secure, false)
+		}
 		c.Next()
 	}
+}
+
+// isLoopbackHost reports whether the request host looks like localhost /
+// 127.0.0.1 / ::1 (dev mode — cookie Secure flag off).
+func isLoopbackHost(host string) bool {
+	h, _, _ := strings.Cut(host, ":")
+	return h == "localhost" || h == "127.0.0.1" || h == "::1"
 }
 
 // HashToken computes base64(SHA-256(token)) — matches the form stored by

@@ -33,23 +33,24 @@ const (
 
 // Mountain is the core curated reference object (data-model → mountains).
 type Mountain struct {
-	ID           ids.ID
-	Slug         string
-	Name         langtext.Text
-	Aliases      []string
-	Region       Region
-	Province     string
-	Location     langtext.Text
-	Latitude     float64
-	Longitude    float64
-	PeakName     langtext.Text
-	PeakHeightM  int
-	Difficulty   int // 1–5 integer scale
-	Status       PublishStatus
-	DataMeta     map[string]FieldMeta // per-field provenance
-	PhotoURL     string               // presigned URL or blob key
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID          ids.ID               `json:"id"`
+	Slug        string               `json:"slug"`
+	Name        langtext.Text        `json:"name"`
+	Aliases     []string             `json:"aliases"`
+	Region      Region               `json:"region"`
+	Province    string               `json:"province"`
+	Location    langtext.Text        `json:"location"`
+	Latitude    float64              `json:"latitude"`
+	Longitude   float64              `json:"longitude"`
+	PeakName    langtext.Text        `json:"peak_name"`
+	PeakHeightM int                  `json:"peak_height_m"`
+	Difficulty  int                  `json:"difficulty"` // 1–5 integer scale
+	Status      PublishStatus        `json:"status"`
+	DataMeta    map[string]FieldMeta `json:"data_meta"` // per-field provenance
+	PhotoKey    string               `json:"-"`         // opaque blob key (never public)
+	PhotoURL    string               `json:"photo_url,omitempty"` // presigned read URL (derived, not stored)
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
 }
 
 // FieldMeta records the provenance of a single field (data-model → data_meta).
@@ -61,35 +62,45 @@ type FieldMeta struct {
 
 // Route is a mountain route (data-model → mountain_routes).
 type Route struct {
-	ID               ids.ID
-	MountainID       ids.ID
-	Name             langtext.Text
-	DistanceKm       float64
-	DurationHours    float64
-	ElevationGainM   int
-	EntryRequirement langtext.Text
-	SortOrder        int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID               ids.ID        `json:"id"`
+	MountainID       ids.ID        `json:"mountain_id"`
+	Name             langtext.Text `json:"name"`
+	DistanceKm       float64       `json:"distance_km"`
+	DurationHours    float64       `json:"duration_hours"`
+	ElevationGainM   int           `json:"elevation_gain_m"`
+	EntryRequirement langtext.Text `json:"entry_requirements"`
+	SortOrder        int           `json:"-"`
+	CreatedAt        time.Time     `json:"-"`
+	UpdatedAt        time.Time     `json:"-"`
 }
 
 // Basecamp is a mountain basecamp (data-model → mountain_basecamps).
 type Basecamp struct {
-	ID             ids.ID
-	MountainID     ids.ID
-	Name           langtext.Text
-	Facilities     langtext.Text
-	CostEstimate   langtext.Text
-	IsPermitPoint  bool
-	Latitude       *float64
-	Longitude      *float64
-	SortOrder      int
+	ID            ids.ID        `json:"id"`
+	MountainID    ids.ID        `json:"mountain_id"`
+	Name          langtext.Text `json:"name"`
+	Facilities    langtext.Text `json:"facilities"`
+	CostEstimate  langtext.Text `json:"cost_estimate"`
+	IsPermitPoint bool          `json:"is_permit_point"`
+	Latitude      *float64      `json:"latitude,omitempty"`
+	Longitude     *float64      `json:"longitude,omitempty"`
+	SortOrder     int           `json:"-"`
+}
+
+// MountainPhoto is a curated gallery image attached to a mountain
+// (004 data-model → mountain_photos). FR-001/FR-013/FR-014.
+type MountainPhoto struct {
+	ID         ids.ID     `json:"id"`
+	MountainID ids.ID     `json:"-"`
+	PhotoKey   string     `json:"-"` // opaque blob key, never public
+	PhotoURL   string     `json:"photo_url,omitempty"` // presigned read URL (derived)
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // MountainProfile is the full profile view returned by the application service.
 type MountainProfile struct {
-	Mountain   Mountain
-	Routes     []Route
-	Basecamps  []Basecamp
-	Weather    *WeatherSnapshot
+	Mountain  Mountain         `json:"mountain"`
+	Routes    []Route          `json:"routes"`
+	Basecamps []Basecamp       `json:"basecamps"`
+	Weather   *WeatherSnapshot `json:"weather,omitempty"`
 }

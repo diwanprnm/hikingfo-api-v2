@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,7 +102,7 @@ func TestRecordHikeCreatesVerifiedEntryAndFeedPost(t *testing.T) {
 		t.Fatalf("expected 1 hike log entry, got %d", log.Total)
 	}
 
-	feed, err := svc.Journey.ListFeed(ctx, jrnDomain.FeedFilter{Page: 1, PageSize: 10})
+	feed, err := svc.Journey.ListFeed(ctx, jrnDomain.FeedFilter{MountainID: m1, Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("ListFeed: %v", err)
 	}
@@ -113,9 +114,10 @@ func TestRecordHikeCreatesVerifiedEntryAndFeedPost(t *testing.T) {
 	}
 }
 
-// T044: photo-less hike rejected with missing-evidence guidance; edit/delete
-// marks updated_at.
-func TestPhotoLessHikeRejectedAndEditDelete(t *testing.T) {
+// T008 (004): evidence drives status — 0 photos → unverified, 1 → verified,
+// 6 → validation error naming the 5-photo limit. Edit of a published post is
+// rejected (delete-only); draft edit/delete still works.
+func TestHikeEvidenceStatusAndPostImmutability(t *testing.T) {
 	pool := newPostgres(t)
 	svc := newServices(pool)
 	ctx := context.Background()
@@ -123,50 +125,76 @@ func TestPhotoLessHikeRejectedAndEditDelete(t *testing.T) {
 	user := createUser(t, pool, "hiker2@test.local", "Hiker Dua")
 	m1 := seedMountain(t, pool, "gunung-test-b", "Gunung Test B", "Test Mount B", catDomain.RegionSumatra, 2, 2500)
 
-	// Photo-less claim is blocked.
-	if _, err := svc.Journey.RecordHike(ctx, user.ID, recordHikeInput(m1, nil, nil)); err == nil {
-		t.Fatal("photo-less hike must be rejected")
+	// 0 evidence → saved, unverified.
+	noEvidence := recordHikeInput(m1, nil, nil)
+	noEvidence.EvidencePhotoKeys = nil
+	res, err := svc.Journey.RecordHike(ctx, user.ID, noEvidence)
+	if err != nil {
+		t.Fatalf("photo-less hike must now be accepted (004 FR-004): %v", err)
+	}
+	if res.Status != string(jrnDomain.HikeStatusUnverified) {
+		t.Fatalf("0 evidence → unverified, got %q", res.Status)
 	}
 
-	// With evidence it succeeds (draft post linked).
-	title := "Draft perjalanan"
-	if _, err := svc.Journey.RecordHike(ctx, user.ID, recordHikeInput(m1, &title, strPtr("draft"))); err != nil {
+	// 1 evidence → verified.
+	res, err = svc.Journey.RecordHike(ctx, user.ID, recordHikeInput(m1, nil, nil))
+	if err != nil {
 		t.Fatalf("RecordHike with evidence: %v", err)
 	}
+	if res.Status != string(jrnDomain.HikeStatusVerified) {
+		t.Fatalf("1 evidence → verified, got %q", res.Status)
+	}
 
-	hikes, err := svc.Journey.ListMyHikes(ctx, user.ID, 1, 20)
-	if err != nil || hikes.Total != 1 {
-		t.Fatalf("expected 1 hike: %v (total=%d)", err, hikes.Total)
+	// 6 evidence → 400 naming the limit.
+	many := recordHikeInput(m1, nil, nil)
+	many.EvidencePhotoKeys = []string{"a", "b", "c", "d", "e", "f"}
+	_, err = svc.Journey.RecordHike(ctx, user.ID, many)
+	if err == nil {
+		t.Fatal("6 evidence photos must be rejected")
 	}
-	entry, err := svc.Journey.GetMyHike(ctx, hikes.Items[0].ID, user.ID)
+	if !strings.Contains(err.Error(), "5") {
+		t.Fatalf("rejection must name the 5-photo limit: %v", err)
+	}
+
+	// Draft post: link, edit allowed, publish, then edit rejected (delete-only).
+	title := "Draft perjalanan"
+	hRes, err := svc.Journey.RecordHike(ctx, user.ID, recordHikeInput(m1, &title, strPtr("draft")))
 	if err != nil {
-		t.Fatalf("GetMyHike: %v", err)
+		t.Fatalf("RecordHike with draft post: %v", err)
 	}
-	if entry.PublishedPostID == nil {
+	hikes, err := svc.Journey.ListMyHikes(ctx, user.ID, 1, 20)
+	if err != nil {
+		t.Fatalf("ListMyHikes: %v", err)
+	}
+	var postID *ids.ID
+	for _, h := range hikes.Items {
+		if h.ID == hRes.ID {
+			l, err := svc.Journey.GetMyHike(ctx, h.ID, user.ID)
+			if err != nil {
+				t.Fatalf("GetMyHike: %v", err)
+			}
+			postID = l.PublishedPostID
+		}
+	}
+	if postID == nil {
 		t.Fatal("expected linked journey post")
 	}
-
-	// Publish then edit — updated_at must advance past created_at.
-	if err := svc.Journey.PublishPost(ctx, *entry.PublishedPostID, user.ID); err != nil {
+	newTitle := "Draft diperbarui"
+	if _, err := svc.Journey.UpdatePost(ctx, *postID, user.ID, updatePostInput(&newTitle)); err != nil {
+		t.Fatalf("draft UpdatePost must succeed: %v", err)
+	}
+	if err := svc.Journey.PublishPost(ctx, *postID, user.ID); err != nil {
 		t.Fatalf("PublishPost: %v", err)
 	}
-	newTitle := "Perjalanan diperbarui"
-	if _, err := svc.Journey.UpdatePost(ctx, *entry.PublishedPostID, user.ID, updatePostInput(&newTitle)); err != nil {
-		t.Fatalf("UpdatePost: %v", err)
-	}
-	updated, err := svc.Journey.GetFeedItem(ctx, *entry.PublishedPostID)
-	if err != nil {
-		t.Fatalf("GetFeedItem after edit: %v", err)
-	}
-	if updated.UpdatedAt.Before(fixedNow()) {
-		t.Fatalf("expected updated_at >= now, got %v", updated.UpdatedAt)
+	if _, err := svc.Journey.UpdatePost(ctx, *postID, user.ID, updatePostInput(&newTitle)); err == nil {
+		t.Fatal("published post must be immutable (004 R8)")
 	}
 
 	// Delete removes it from the feed.
-	if err := svc.Journey.DeletePost(ctx, *entry.PublishedPostID, user.ID); err != nil {
+	if err := svc.Journey.DeletePost(ctx, *postID, user.ID); err != nil {
 		t.Fatalf("DeletePost: %v", err)
 	}
-	feed, err := svc.Journey.ListFeed(ctx, jrnDomain.FeedFilter{Page: 1, PageSize: 10})
+	feed, err := svc.Journey.ListFeed(ctx, jrnDomain.FeedFilter{MountainID: m1, Page: 1, PageSize: 10})
 	if err != nil {
 		t.Fatalf("ListFeed after delete: %v", err)
 	}
@@ -232,10 +260,22 @@ func TestBadgeEarnAndLapse(t *testing.T) {
 		t.Fatalf("5 distinct → menengah level, got %s", view.ExperienceLevel.Key)
 	}
 
-	// Delete one hike → badge 5 lapses transparently.
+	// Delete one hike → badge 5 lapses transparently. All hikes share one
+	// climb_date, so pick any mountain and delete every hike to it.
 	hikes, _ := svc.Journey.ListMyHikes(ctx, user.ID, 1, 50)
-	if err := svc.Journey.DeleteMyHike(ctx, hikes.Items[0].ID, user.ID); err != nil {
-		t.Fatalf("DeleteMyHike: %v", err)
+	if len(hikes.Items) == 0 {
+		t.Fatal("expected hikes to list before delete")
+	}
+	target := hikes.Items[0].MountainID
+	deleted := 0
+	for _, h := range hikes.Items {
+		if h.MountainID != target {
+			continue
+		}
+		if err := svc.Journey.DeleteMyHike(ctx, h.ID, user.ID); err != nil {
+			t.Fatalf("DeleteMyHike: %v", err)
+		}
+		deleted++
 	}
 	view, _ = svc.Achieve.GetBadges(ctx, user.ID)
 	if view.DistinctMountains != 4 {
@@ -412,6 +452,12 @@ func TestCatalogueSearchFilterAndProfile(t *testing.T) {
 	svc := newServices(pool)
 	ctx := context.Background()
 
+	// The seed migration populates the catalogue; each test gets its own
+	// container, so wipe it and test against controlled fixtures only.
+	if _, err := pool.Exec(ctx, `TRUNCATE mountains CASCADE`); err != nil {
+		t.Fatalf("truncate mountains: %v", err)
+	}
+
 	rinjani := seedMountain(t, pool, "gunung-rinjani", "Gunung Rinjani", "Mount Rinjani", catDomain.RegionBaliNusaTenggara, 5, 3726)
 	seedMountain(t, pool, "gunung-gede", "Gunung Gede", "Mount Gede", catDomain.RegionJawa, 3, 2958)
 
@@ -421,7 +467,7 @@ func TestCatalogueSearchFilterAndProfile(t *testing.T) {
 		t.Fatalf("SearchAndFilter: %v", err)
 	}
 	if res.Total != 1 || res.Items[0].ID != rinjani {
-		t.Fatalf("expected rinjani only, got total=%d", res.Total)
+		t.Fatalf("expected fixture rinjani only, got total=%d", res.Total)
 	}
 
 	// Filter by region.

@@ -17,7 +17,12 @@ type Dependencies struct {
 	Requests domain.RequestRepository
 	Profiles domain.ProfileReader // cross-context: identity limited profiles
 	Revealer domain.ContactRevealer
-	Now      func() time.Time
+	// OnRequestSent / OnRequestAccepted are post-commit notification hooks
+	// (composition-root supplied; partner_request_received/accepted). They
+	// never fail the underlying use-case.
+	OnRequestSent     func(ctx context.Context, recipient, sender ids.ID, payload map[string]any)
+	OnRequestAccepted func(ctx context.Context, sender, recipient ids.ID, payload map[string]any)
+	Now               func() time.Time
 }
 
 // Service exposes the partner use-cases to the interfaces layer.
@@ -133,6 +138,14 @@ func (s *Service) SendRequest(ctx context.Context, fromUserID ids.ID, toUserID i
 	if err := s.d.Requests.Create(ctx, req); err != nil {
 		return nil, kerr.WrapInternal("could not create request", err)
 	}
+	if s.d.OnRequestSent != nil {
+		s.d.OnRequestSent(ctx, toUserID, fromUserID, map[string]any{
+			"request_id":  string(req.ID),
+			"mountain_id": string(mountainID),
+			"trip_start":  req.TripStart.Format("2006-01-02"),
+			"trip_end":    req.TripEnd.Format("2006-01-02"),
+		})
+	}
 	return req, nil
 }
 
@@ -177,6 +190,16 @@ func (s *Service) AcceptRequest(ctx context.Context, requestID, recipientID ids.
 		_ = s.d.Notices.UpdateStatus(ctx, *req.NoticeID, domain.NoticeStatusMatched)
 	}
 
+	// Notify the sender that their request was accepted (post-commit hook).
+	if s.d.OnRequestAccepted != nil {
+		s.d.OnRequestAccepted(ctx, req.FromUserID, recipientID, map[string]any{
+			"request_id":  string(req.ID),
+			"mountain_id": string(req.MountainID),
+			"trip_start":  req.TripStart.Format("2006-01-02"),
+			"trip_end":    req.TripEnd.Format("2006-01-02"),
+		})
+	}
+
 	return nil
 }
 
@@ -199,6 +222,61 @@ func (s *Service) DeclineRequest(ctx context.Context, requestID, recipientID ids
 // WithdrawRequest cancels a pending request (sender only).
 func (s *Service) WithdrawRequest(ctx context.Context, requestID, senderID ids.ID) error {
 	return s.d.Requests.Withdraw(ctx, requestID, senderID)
+}
+
+// FindRequest loads one request (used by the interfaces layer to resolve the
+// report target without exposing repo internals).
+func (s *Service) FindRequest(ctx context.Context, requestID ids.ID) (*domain.PartnerRequest, error) {
+	return s.d.Requests.FindByID(ctx, requestID)
+}
+
+// ---- contact reveal (FR-013/SC-006 — server-enforced) ----------------------
+
+// RevealIfMatched is the ONLY path that serves a counterpart's private contact
+// channels. It re-checks the mutual accepted match server-side before calling
+// the identity revealer port, so the HTTP layer can never leak contacts
+// without a confirmed match. Returns ok=false (no error) when unmatched.
+func (s *Service) RevealIfMatched(ctx context.Context, requester, owner, mountainID ids.ID) (*domain.RevealedContact, bool, error) {
+	if s.d.Revealer == nil {
+		return nil, false, kerr.Internal("contact revealer not wired")
+	}
+	ok, err := s.d.Requests.HasAcceptedMatch(ctx, requester, owner, mountainID)
+	if err != nil {
+		return nil, false, kerr.WrapInternal("could not verify match", err)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	c, err := s.d.Revealer.RevealContacts(ctx, owner)
+	if err != nil {
+		return nil, true, kerr.WrapInternal("could not load contacts", err)
+	}
+	return c, true, nil
+}
+
+// RevealRequest serves the counterpart's contacts for one partner request.
+// The mutual accepted match is re-verified here (server-side, FR-013/SC-006);
+// a non-matched participant gets Forbidden, never contact data.
+func (s *Service) RevealRequest(ctx context.Context, requestID, userID ids.ID) (*domain.RevealedContact, error) {
+	req, err := s.d.Requests.FindByID(ctx, requestID)
+	if err != nil {
+		return nil, kerr.NotFound("request not found")
+	}
+	if req.FromUserID != userID && req.ToUserID != userID {
+		return nil, kerr.Forbidden("not a participant of this request")
+	}
+	other := req.FromUserID
+	if other == userID {
+		other = req.ToUserID
+	}
+	c, ok, err := s.RevealIfMatched(ctx, userID, other, req.MountainID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, kerr.Forbidden("contacts are revealed only after a mutual match")
+	}
+	return c, nil
 }
 
 // ---- helpers ---------------------------------------------------------------

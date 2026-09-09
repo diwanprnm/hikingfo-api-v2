@@ -4,6 +4,7 @@
 package interfaces
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -26,13 +27,18 @@ type Handler struct {
 	googleVerifier application.GoogleVerifier
 	// experience derives the user's level from distinct-mountain count.
 	experience domain.ExperienceProvider
+	// stats assembles GET /admin/stats from other contexts; wired at the
+	// composition root. Nil → stats endpoint reports "not wired".
+	stats func(ctx context.Context) (map[string]any, error)
 }
 
 // Config carries non-service wiring for the identity handlers.
 type Config struct {
-	CookieName    string
+	CookieName     string
 	GoogleVerifier application.GoogleVerifier
-	Experience    domain.ExperienceProvider
+	Experience     domain.ExperienceProvider
+	// Stats assembles GET /admin/stats (composition-root supplied).
+	Stats func(ctx context.Context) (map[string]any, error)
 }
 
 // NewHandler wires the handler.
@@ -46,20 +52,29 @@ func NewHandler(svc *application.Service, cfg Config) *Handler {
 		cookieName:     cookie,
 		googleVerifier: cfg.GoogleVerifier,
 		experience:     cfg.Experience,
+		stats:          cfg.Stats,
 	}
+}
+
+// SetStats wires the /admin/stats provider (called by the composition root
+// after all contexts are constructed).
+func (h *Handler) SetStats(fn func(ctx context.Context) (map[string]any, error)) {
+	h.stats = fn
 }
 
 // RegisterRoutes mounts all identity routes under /api/v1.
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	auth := rg.Group("/auth")
 	{
-		auth.POST("/register", h.register)
-		auth.POST("/login", h.login)
-		auth.POST("/google", h.googleLogin)
+		// Credential endpoints are brute-force targets — strict per-IP budget.
+		brute := auth.Group("", plathttp.RateLimiter(0.1, 5))
+		brute.POST("/register", h.register)
+		brute.POST("/login", h.login)
+		brute.POST("/google", h.googleLogin)
+		brute.POST("/verify-email", h.verifyEmail)
+		brute.POST("/forgot-password", h.forgotPassword)
+		brute.POST("/reset-password", h.resetPassword)
 		auth.POST("/logout", plathttp.RequireAuth(), h.logout)
-		auth.POST("/verify-email", h.verifyEmail)
-		auth.POST("/forgot-password", h.forgotPassword)
-		auth.POST("/reset-password", h.resetPassword)
 		auth.GET("/me", plathttp.RequireAuth(), h.me)
 	}
 

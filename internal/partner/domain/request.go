@@ -21,18 +21,18 @@ const (
 // PartnerRequest is a directed request from one user to another to hike
 // together on a given mountain and date range (data-model → partner_requests).
 type PartnerRequest struct {
-	ID          ids.ID
-	FromUserID  ids.ID
-	ToUserID    ids.ID
-	NoticeID    *ids.ID
-	MountainID  ids.ID
-	TripStart   time.Time
-	TripEnd     time.Time
-	Message     string
-	Status      RequestStatus
-	MatchedAt   *time.Time
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
+	ID         ids.ID    `json:"id"`
+	FromUserID ids.ID    `json:"from_user_id"`
+	ToUserID   ids.ID    `json:"to_user_id"`
+	NoticeID   *ids.ID   `json:"notice_id,omitempty"`
+	MountainID ids.ID    `json:"mountain_id"`
+	TripStart  time.Time `json:"trip_start"`
+	TripEnd    time.Time `json:"trip_end"`
+	Message    string    `json:"message"`
+	Status     RequestStatus `json:"status"`
+	MatchedAt  *time.Time    `json:"matched_at,omitempty"`
+	CreatedAt  time.Time     `json:"created_at"`
+	ExpiresAt  time.Time     `json:"expires_at"`
 }
 
 // RequestFilter carries query parameters for listing requests.

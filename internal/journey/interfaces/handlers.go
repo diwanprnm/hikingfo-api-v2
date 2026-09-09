@@ -11,22 +11,29 @@ import (
 	"hikingfo/backend/internal/journey/application"
 	"hikingfo/backend/internal/journey/domain"
 	plathttp "hikingfo/backend/internal/platform/http"
+	"hikingfo/backend/internal/platform/storage"
 	"hikingfo/backend/internal/shared/ids"
 	"hikingfo/backend/internal/shared/kerr"
 )
 
 // Handler holds the journey application service.
-type Handler struct{ svc *application.Service }
+type Handler struct {
+	svc   *application.Service
+	blobs storage.BlobStore // 002 §8: real POST /uploads pipeline
+}
 
-// NewHandler wires the handler.
-func NewHandler(svc *application.Service) *Handler {
-	return &Handler{svc: svc}
+// NewHandler wires the handler. blobs is optional (nil → placeholder upload mode).
+func NewHandler(svc *application.Service, blobs ...storage.BlobStore) *Handler {
+	h := &Handler{svc: svc}
+	if len(blobs) > 0 {
+		h.blobs = blobs[0]
+	}
+	return h
 }
 
 // RegisterRoutes mounts all journey routes under the given group.
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	auth := rg.Group("", plathttp.RequireAuth())
-	pub := rg.Group("")
 
 	// §4 Journey / hike log (authenticated)
 	auth.POST("/hikes", h.recordHike)
@@ -38,13 +45,17 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	auth.POST("/me/journeys/:id/publish", h.publishPost)
 	auth.DELETE("/me/journeys/:id", h.deletePost)
 
-	// §8 Community feed (public)
-	pub.GET("/journeys", h.listFeed)
-	pub.GET("/journeys/:id", h.getFeedItem)
-	pub.POST("/journeys/:id/reports", h.reportPost)
+	// §8 Community feed (authenticated — 004: signed-in users only).
+	// GET /mountains/:slug/journeys is the same feed scoped to one mountain
+	// (contracts §2) — resolved to an ID here.
+	auth.GET("/journeys", h.listFeed)
+	auth.GET("/mountains/:slug/journeys", h.listMountainJourneys)
+	auth.GET("/journeys/:id", h.getFeedItem)
+	auth.POST("/journeys/:id/reports", h.reportPost)
 
-	// §8 Uploads (authenticated, placeholder)
-	auth.POST("/uploads", h.upload)
+	// §8 Uploads (authenticated, placeholder) — upload endpoints are
+	// abuse-sensitive, throttle per IP.
+	auth.POST("/uploads", plathttp.RateLimiter(0.2, 5), h.upload)
 }
 
 // ---- §4 Hike log ----------------------------------------------------------
@@ -53,7 +64,7 @@ type recordHikeReq struct {
 	MountainID        string   `json:"mountain_id" binding:"required"`
 	RouteID           *string  `json:"route_id"`
 	ClimbDate         string   `json:"climb_date" binding:"required"`
-	EvidencePhotoKeys []string `json:"evidence_photo_keys" binding:"required,min=1"`
+	EvidencePhotoKeys []string `json:"evidence_photo_keys"`
 	Title             *string  `json:"title"`
 	Summary           *string  `json:"summary"`
 	Narrative         *string  `json:"narrative"`
@@ -295,6 +306,38 @@ func (h *Handler) listFeed(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// listMountainJourneys serves GET /mountains/{slug}/journeys (contracts §2).
+// Reuses the feed query after resolving the slug to a mountain id.
+func (h *Handler) listMountainJourneys(c *gin.Context) {
+	slug := c.Param("slug")
+	if slug == "" {
+		plathttp.WriteError(c, kerr.Validation("missing mountain slug"))
+		return
+	}
+	mountainID, err := h.svc.MountainIDBySlug(c.Request.Context(), slug)
+	if err != nil {
+		plathttp.WriteError(c, err)
+		return
+	}
+	filter := domain.FeedFilter{
+		MountainID: mountainID,
+		Page:       1,
+		PageSize:   20,
+	}
+	if v := c.Query("page"); v != "" {
+		filter.Page, _ = strconv.Atoi(v)
+	}
+	if v := c.Query("page_size"); v != "" {
+		filter.PageSize, _ = strconv.Atoi(v)
+	}
+	result, err := h.svc.ListFeed(c.Request.Context(), filter)
+	if err != nil {
+		plathttp.WriteError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func (h *Handler) getFeedItem(c *gin.Context) {
 	id, err := parseID(c.Param("id"))
 	if err != nil {
@@ -326,14 +369,11 @@ func (h *Handler) reportPost(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }
 
-// ---- §8 Uploads (placeholder) ---------------------------------------------
+// ---- §8 Uploads -----------------------------------------------------------
 
 func (h *Handler) upload(c *gin.Context) {
-	// Actual MinIO upload wired later. Return placeholder.
-	c.JSON(http.StatusCreated, gin.H{
-		"key": "uploads/placeholder.jpg",
-		"url": "/static/uploads/placeholder.jpg",
-	})
+	// Shared platform pipeline (002): sniff, size-cap, store, presign.
+	plathttp.UploadHandler(h.blobs)(c)
 }
 
 // ---- helpers --------------------------------------------------------------

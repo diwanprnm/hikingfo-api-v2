@@ -89,5 +89,15 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err
 	}
-	return goose.UpContext(ctx, sqlDB, dir)
+	if err := goose.UpContext(ctx, sqlDB, dir); err != nil {
+		return err
+	}
+	// Schema seed (T041) lives separately so `migrations/` stays schema-only.
+	seedDir := filepath.Join(dir, "seed")
+	if _, err := os.Stat(seedDir); err == nil {
+		if err := goose.UpContext(ctx, sqlDB, seedDir); err != nil {
+			return fmt.Errorf("seed: %w", err)
+		}
+	}
+	return nil
 }

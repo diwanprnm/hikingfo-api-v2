@@ -34,6 +34,23 @@ type SearchFilter struct {
 	PageSize   int     // items per page (default 20)
 }
 
+// GalleryRepository is the persistence port for curated mountain photos
+// (004 → mountain_photos).
+type GalleryRepository interface {
+	// ListByMountain returns all photos for a mountain, oldest first.
+	ListByMountain(ctx context.Context, mountainID ids.ID) ([]MountainPhoto, error)
+	// Insert adds one photo.
+	Insert(ctx context.Context, p *MountainPhoto) error
+	// Delete removes a photo row; returns ErrPhotoNotFound when the photo does
+	// not exist on this mountain.
+	Delete(ctx context.Context, photoID, mountainID ids.ID) error
+}
+
+// PhotoNotFound signals a missing gallery row (Delete path).
+type PhotoNotFound struct{}
+
+func (PhotoNotFound) Error() string { return "photo not found" }
+
 // WeatherStore is the port for reading/writing cached weather data.
 type WeatherStore interface {
 	// Get returns the latest cached weather for a mountain (may be stale).

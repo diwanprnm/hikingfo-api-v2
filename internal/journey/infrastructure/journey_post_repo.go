@@ -39,7 +39,7 @@ func (r *JourneyPostRepository) Create(ctx context.Context, p *domain.JourneyPos
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		string(p.ID), string(p.UserID), string(p.MountainID),
 		nullableID(p.RouteID), p.Title, summary, narrative,
-		p.PhotoKeys, string(p.Visibility), string(p.ModerationStatus),
+		coalesceStrings(p.PhotoKeys), string(p.Visibility), string(p.ModerationStatus),
 	)
 	return err
 }
@@ -172,15 +172,19 @@ func (r *JourneyPostRepository) ListFeed(ctx context.Context, filter domain.Feed
 		var fi domain.FeedItem
 		var summaryJSON []byte
 		var region string
+		var avatar *string
 		if err := rows.Scan(
 			&fi.ID, &fi.Title, &summaryJSON,
 			&fi.Mountain.ID, &fi.Mountain.Name, &fi.Mountain.Slug, &region,
-			&fi.Author.ID, &fi.Author.DisplayName, &fi.Author.AvatarURL,
+			&fi.Author.ID, &fi.Author.DisplayName, &avatar,
 			&fi.PublishedAt, &fi.UpdatedAt,
 		); err != nil {
 			return nil, 0, err
 		}
 		fi.Mountain.Region = region
+		if avatar != nil {
+			fi.Author.AvatarURL = *avatar
+		}
 		fi.Summary = make(map[string]any)
 		_ = json.Unmarshal(summaryJSON, &fi.Summary)
 		out = append(out, fi)
@@ -204,12 +208,13 @@ func (r *JourneyPostRepository) GetFeedItem(ctx context.Context, id ids.ID) (*do
 	var routeID *string
 	var summaryJSON, narrativeJSON []byte
 	var region string
+	var avatar *string
 	if err := row.Scan(
 		&d.ID, &d.UserID, &d.MountainID, &routeID, &d.Title,
 		&summaryJSON, &narrativeJSON, &d.PhotoKeys, &d.Visibility,
 		&d.ModerationStatus, &d.PublishedAt, &d.UpdatedAt,
 		&d.Mountain.ID, &d.Mountain.Name, &d.Mountain.Slug, &region,
-		&d.Author.ID, &d.Author.DisplayName, &d.Author.AvatarURL,
+		&d.Author.ID, &d.Author.DisplayName, &avatar,
 	); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, domain.JourneyPostNotFound{}
@@ -217,6 +222,9 @@ func (r *JourneyPostRepository) GetFeedItem(ctx context.Context, id ids.ID) (*do
 		return nil, err
 	}
 	d.Mountain.Region = region
+	if avatar != nil {
+		d.Author.AvatarURL = *avatar
+	}
 	d.Summary = make(map[string]any)
 	_ = json.Unmarshal(summaryJSON, &d.Summary)
 	_ = json.Unmarshal(narrativeJSON, &d.Narrative)
@@ -254,4 +262,26 @@ func scanJourneyPost(row scannable) (*domain.JourneyPost, error) {
 		p.RouteID = &id
 	}
 	return &p, nil
+}
+
+// coalesceStrings maps a nil slice to an empty slice (photo_keys NOT NULL).
+func coalesceStrings(s []string) any {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// SetModerationStatus flips moderation_status directly (admin path).
+func (r *JourneyPostRepository) SetModerationStatus(ctx context.Context, id ids.ID, status domain.ModerationStatus) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE journey_posts SET moderation_status = $2 WHERE id = $1`,
+		string(id), string(status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.JourneyPostNotFound{}
+	}
+	return nil
 }

@@ -22,12 +22,12 @@ const (
 
 // Notification is a single in-app notification (data-model → notifications).
 type Notification struct {
-	ID        ids.ID
-	UserID    ids.ID
-	Type      Type
-	Payload   map[string]any // flexible per-type JSON payload
-	ReadAt    *time.Time
-	CreatedAt time.Time
+	ID        ids.ID         `json:"id"`
+	UserID    ids.ID         `json:"-"`
+	Type      Type           `json:"type"`
+	Payload   map[string]any `json:"payload"` // flexible per-type JSON payload
+	ReadAt    *time.Time     `json:"read_at"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // IsUnread reports whether the notification has not been read.

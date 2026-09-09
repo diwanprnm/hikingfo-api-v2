@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"hikingfo/backend/internal/journey/domain"
@@ -16,6 +17,13 @@ import (
 type Dependencies struct {
 	Hikes domain.HikeLogRepository
 	Posts domain.JourneyPostRepository
+	// SlugLookup resolves a mountain slug to its id for the per-mountain
+	// journey list (cross-context READ; composition-root supplied).
+	SlugLookup func(ctx context.Context, slug string) (ids.ID, error)
+	// OnHikeRecorded is a post-commit hook fired after a hike is successfully
+	// logged (composition-root supplied; used to evaluate badge_earned
+	// notifications). Best-effort: errors never fail the hike record.
+	OnHikeRecorded func(ctx context.Context, userID ids.ID) error
 }
 
 // Service exposes the journey use-cases to the interfaces layer.
@@ -33,7 +41,7 @@ type RecordHikeInput struct {
 	MountainID       ids.ID    `json:"mountain_id" binding:"required"`
 	RouteID          *ids.ID   `json:"route_id"`
 	ClimbDate        string    `json:"climb_date" binding:"required"`
-	EvidencePhotoKeys []string `json:"evidence_photo_keys" binding:"required,min=1"`
+	EvidencePhotoKeys []string `json:"evidence_photo_keys"`
 	Title            *string   `json:"title"`
 	Summary          *string   `json:"summary"`
 	Narrative        *string   `json:"narrative"`
@@ -49,13 +57,19 @@ type RecordHikeResult struct {
 
 // RecordHike creates a hike log entry (and optionally a journey post).
 func (s *Service) RecordHike(ctx context.Context, userID ids.ID, in RecordHikeInput) (*RecordHikeResult, error) {
-	if len(in.EvidencePhotoKeys) == 0 {
-		return nil, kerr.Validation("evidence_photo_keys must contain at least 1 item")
+	if len(in.EvidencePhotoKeys) > 5 {
+		return nil, kerr.Validation("evidence_photo_keys exceeds the limit of 5 photos")
 	}
 
 	climbDate, err := time.Parse("2006-01-02", in.ClimbDate)
 	if err != nil {
 		return nil, kerr.Validation("climb_date must be YYYY-MM-DD")
+	}
+
+	// FR-005: status derived from evidence presence at record time.
+	status := domain.HikeStatusUnverified
+	if len(in.EvidencePhotoKeys) >= 1 {
+		status = domain.HikeStatusVerified
 	}
 
 	hike := &domain.HikeLogEntry{
@@ -65,11 +79,20 @@ func (s *Service) RecordHike(ctx context.Context, userID ids.ID, in RecordHikeIn
 		RouteID:           in.RouteID,
 		ClimbDate:         climbDate,
 		EvidencePhotoKeys: in.EvidencePhotoKeys,
-		Status:            domain.HikeStatusVerified,
+		Status:            status,
 	}
 
 	if err := s.deps.Hikes.Create(ctx, hike); err != nil {
 		return nil, kerr.WrapInternal("could not create hike log", err)
+	}
+
+	// Best-effort post-record hook (badge evaluation lives in the composition
+	// root — journey never imports achievement). Errors are logged, not raised:
+	// the hike is committed and badge math is read-time anyway.
+	if s.deps.OnHikeRecorded != nil {
+		if err := s.deps.OnHikeRecorded(ctx, userID); err != nil {
+			slog.Warn("badge evaluation after hike record failed", "user_id", userID, "error", err)
+		}
 	}
 
 	// If title is provided, also create a draft journey post.
@@ -85,11 +108,9 @@ func (s *Service) RecordHike(ctx context.Context, userID ids.ID, in RecordHikeIn
 			RouteID:          in.RouteID,
 			Title:            *in.Title,
 			Summary:          make(map[string]any),
+			PhotoKeys:        []string{},
 			Visibility:       vis,
 			ModerationStatus: domain.ModerationVisible,
-		}
-		if in.Summary != nil {
-			_ = []byte(*in.Summary) // validate JSON later if needed
 		}
 		if in.PhotoKeys != nil {
 			post.PhotoKeys = *in.PhotoKeys
@@ -98,6 +119,9 @@ func (s *Service) RecordHike(ctx context.Context, userID ids.ID, in RecordHikeIn
 			return nil, kerr.WrapInternal("could not create journey post", err)
 		}
 		hike.PublishedPostID = &post.ID
+		if err := s.deps.Hikes.UpdatePublishedPost(ctx, hike.ID, post.ID); err != nil {
+			return nil, kerr.WrapInternal("could not link journey post", err)
+		}
 	}
 
 	return &RecordHikeResult{ID: hike.ID, Status: string(hike.Status)}, nil
@@ -231,6 +255,10 @@ func (s *Service) UpdatePost(ctx context.Context, id, userID ids.ID, in UpdatePo
 	if post.UserID != userID {
 		return nil, kerr.Forbidden("not your post")
 	}
+	// R8: published posts are immutable — delete only.
+	if post.Visibility == domain.VisibilityPublished {
+		return nil, kerr.Forbidden("published posts cannot be edited")
+	}
 	if in.Title != nil {
 		post.Title = *in.Title
 	}
@@ -275,6 +303,15 @@ func (s *Service) DeletePost(ctx context.Context, id, userID ids.ID) error {
 }
 
 // ---- Public Feed ----------------------------------------------------------
+
+// MountainIDBySlug resolves a mountain slug to its id via the composition-root
+// lookup (contracts §2 GET /mountains/{slug}/journeys).
+func (s *Service) MountainIDBySlug(ctx context.Context, slug string) (ids.ID, error) {
+	if s.deps.SlugLookup == nil {
+		return ids.Nil, kerr.Internal("slug lookup not wired")
+	}
+	return s.deps.SlugLookup(ctx, slug)
+}
 
 // FeedResult is the paginated public feed.
 type FeedResult struct {

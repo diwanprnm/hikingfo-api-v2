@@ -3,6 +3,7 @@
 package interfaces
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -10,23 +11,44 @@ import (
 
 	"hikingfo/backend/internal/partner/application"
 	"hikingfo/backend/internal/partner/domain"
+	modApp "hikingfo/backend/internal/moderation/application"
 	plathttp "hikingfo/backend/internal/platform/http"
 	"hikingfo/backend/internal/shared/kerr"
 	"hikingfo/backend/internal/shared/page"
 	"hikingfo/backend/internal/shared/ids"
 )
 
+// moderationReporter is the slice of the moderation application service the
+// partner interfaces layer needs to file pre-match reports (contracts §6).
+// Declared locally so partner never imports moderation wholesale (DDD rule).
+type moderationReporter interface {
+	Create(ctx context.Context, reporter *ids.ID, targetType, targetID, fieldRef, reason, detail string) (*modApp.ReportView, error)
+}
+
 // Handler holds the partner application service.
-type Handler struct{ svc *application.Service }
+type Handler struct {
+	svc *application.Service
+	// moderation files user_profile reports (composition-root supplied).
+	// Nil → report endpoint acknowledges only.
+	moderation moderationReporter
+}
 
 // NewHandler wires the handler.
 func NewHandler(svc *application.Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// SetModeration wires the moderation report writer (US5 pre-match report).
+func (h *Handler) SetModeration(m moderationReporter) {
+	h.moderation = m
+}
+
 // RegisterRoutes mounts all partner routes under /api/v1.
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
-	auth := rg.Group("", plathttp.RequireAuth())
+	// Partner discovery + request sending are abuse-sensitive (they reveal
+	// user contact info on accept) — throttle per IP.
+	limited := rg.Group("", plathttp.RateLimiter(0.5, 10))
+	auth := limited.Group("", plathttp.RequireAuth())
 	pub := rg.Group("")
 
 	auth.GET("/partners/search", h.search)
@@ -38,6 +60,7 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler) {
 	auth.POST("/partners/requests/:id/accept", h.acceptRequest)
 	auth.POST("/partners/requests/:id/decline", h.declineRequest)
 	auth.DELETE("/partners/requests/:id", h.withdrawRequest)
+	auth.POST("/partners/requests/:id/reveal", h.revealRequest)
 	pub.POST("/partners/requests/:id/reports", h.reportRequest)
 }
 
@@ -303,7 +326,24 @@ func (h *Handler) withdrawRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ---- reports (public, stub) -----------------------------------------------
+// revealRequest serves the counterpart's contact channels for one accepted
+// (mutually matched) request. The match re-check lives in the application
+// service; an unmatched or non-participant caller gets 403 with no contacts.
+func (h *Handler) revealRequest(c *gin.Context) {
+	requestID, err := ids.Parse(c.Param("id"))
+	if err != nil {
+		plathttp.WriteError(c, kerr.Validation("invalid request id"))
+		return
+	}
+	contacts, err := h.svc.RevealRequest(c.Request.Context(), requestID, plathttp.UserID(c))
+	if err != nil {
+		plathttp.WriteError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, contacts)
+}
+
+// ---- reports (public → moderation queue) -----------------------------------
 
 type reportReq struct {
 	Reason string `json:"reason" binding:"required"`
@@ -311,11 +351,29 @@ type reportReq struct {
 }
 
 func (h *Handler) reportRequest(c *gin.Context) {
+	requestID, err := ids.Parse(c.Param("id"))
+	if err != nil {
+		plathttp.WriteError(c, kerr.Validation("invalid request id"))
+		return
+	}
 	var req reportReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		plathttp.WriteError(c, kerr.Validation("reason is required"))
 		return
 	}
-	// Report is created via the moderation context. Acknowledge for now.
+	// Pre-match safety (US5): abusive-request reports land in the moderation
+	// queue as user_profile reports against the request sender.
+	if h.moderation != nil {
+		r, err := h.svc.FindRequest(c.Request.Context(), requestID)
+		if err != nil {
+			plathttp.WriteError(c, err)
+			return
+		}
+		if _, err := h.moderation.Create(c.Request.Context(), nil,
+			"user_profile", string(r.FromUserID), "", req.Reason, req.Detail); err != nil {
+			plathttp.WriteError(c, err)
+			return
+		}
+	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }

@@ -70,6 +70,12 @@ type MinIO struct {
 	AccessKey string
 	SecretKey string
 	Secure    bool
+	// PublicURL is the base URL browsers use for presigned URLs (002 research
+	// R2). Inside compose the API reaches MinIO at minio:9000, but a signed
+	// URL must carry the host the browser actually calls (e.g.
+	// http://localhost:9000 — port 9000 is published in compose.yaml).
+	// Empty → sign with Endpoint (URLs then work only in-cluster / tests).
+	PublicURL string
 	Buckets   struct {
 		Photos   string
 		Evidence string
@@ -168,6 +174,7 @@ func loadMinIO() MinIO {
 		AccessKey: get("MINIO_ROOT_USER", "hikingfo"),
 		SecretKey: os.Getenv("MINIO_ROOT_PASSWORD"),
 		Secure:    getBool("MINIO_SECURE", false),
+		PublicURL: strings.TrimRight(os.Getenv("MINIO_PUBLIC_URL"), "/"),
 	}
 	m.Buckets.Photos = get("MINIO_BUCKET_PHOTOS", "photos")
 	m.Buckets.Evidence = get("MINIO_BUCKET_EVIDENCE", "evidence")
